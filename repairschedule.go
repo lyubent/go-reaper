@@ -16,18 +16,18 @@ import (
 )
 
 type ScheduleEntry struct {
-	ClusterName 	  string
-	Keyspace 		  string
-	Owner 			  string
-	TriggerTime 	  time.Time
-	DaysBetween 	  int
-	Segments 		  int
+	ClusterName       string
+	Keyspace          string
+	Owner             string
+	TriggerTime       time.Time
+	DaysBetween       int
+	Segments          int
 	IncrementalRepair bool
 	BlacklistedCFs    []string
 	RepairThreadCount int
 }
 
-func main () {
+func main() {
 	parseKSFile()
 }
 
@@ -169,6 +169,6 @@ func parseKSFile() {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Println("❌ error reading csv: " , err)
+		log.Println("❌ error reading csv: ", err)
 	}
 }
