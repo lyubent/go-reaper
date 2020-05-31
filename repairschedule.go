@@ -1,40 +1,66 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
-func main () {
-
-	client := login()
-	// add an individual schedule
-	scheduleRepair(client)
+type ScheduleEntry struct {
+	ClusterName 	  string
+	Keyspace 		  string
+	Owner 			  string
+	TriggerTime 	  time.Time
+	DaysBetween 	  int
+	Segments 		  int
+	IncrementalRepair bool
+	BlacklistedCFs    []string
+	RepairThreadCount int
 }
 
-func scheduleRepair(client *http.Client) {
+func main () {
+	parseKSFile()
+}
+
+func scheduleRepair(client *http.Client, entry *ScheduleEntry) {
 
 	endpoint := "http://localhost:8080/repair_schedule"
-	request, err := http.NewRequest("POST", endpoint, nil)
+	request, _ := http.NewRequest("POST", endpoint, nil)
 	request.Header.Set("Content-type", "application/json")
 	// build required parameters for repairing a keyspace
 	q := request.URL.Query()
-	q.Add("clusterName", "premium1")
-	q.Add("keyspace", "keyspace1")
-	q.Add("owner", "lil' timmy")
-	q.Add("scheduleTriggerTime", "2020-05-03T07:30:00")
-	q.Add("scheduleDaysBetween", "10")
+	q.Add("clusterName", entry.ClusterName)
+	q.Add("keyspace", entry.Keyspace)
+	q.Add("owner", entry.Owner)
+	q.Add("segmentCountPerNode", strconv.Itoa(entry.Segments))
+	q.Add("scheduleTriggerTime", entry.TriggerTime.Format("2006-01-02T15:04:05"))
+	q.Add("scheduleDaysBetween", strconv.Itoa(entry.DaysBetween))
+	q.Add("repairParallelism", "PARALLEL")
+	q.Add("incrementalRepair", strconv.FormatBool(entry.IncrementalRepair))
+	q.Add("repairThreadCount", strconv.Itoa(entry.RepairThreadCount))
+	// optional settings for larger repairs
+	if entry.BlacklistedCFs != nil {
+		jsonArr, _ := json.Marshal(entry.BlacklistedCFs)
+		fmt.Println(fmt.Sprintf("%s", jsonArr))
+		q.Add("blacklistedTables", fmt.Sprintf("%s", jsonArr))
+	}
+
 	// encode the params
 	request.URL.RawQuery = q.Encode()
 	// run the request
 	response, err := client.Do(request)
 
 	if err != nil {
-		log.Println("❌ failed to post repair schedule")
-		log.Fatal(err)
+		log.Println("❌ failed to post repair schedule: ", err)
 	}
 
 	defer response.Body.Close()
@@ -42,14 +68,13 @@ func scheduleRepair(client *http.Client) {
 	// no response is expected from reaper if the schedule addition is successful
 	body, err := ioutil.ReadAll(response.Body)
 	if err != nil {
-		log.Println("❌ error reading request body")
-		log.Fatal(err)
+		log.Println("❌ error reading request body: ", err)
 	}
 
 	if string(body) == "" {
 		log.Println("✅ successfully added repair schedule")
 	} else {
-		log.Fatal("❌ ", string(body))
+		log.Println("❌ ", string(body))
 	}
 }
 
@@ -61,8 +86,8 @@ func login() *http.Client {
 	}
 	client := http.Client{Jar: jar}
 	resp, err := client.PostForm("http://localhost:8080/login", url.Values{
-		"password": {"<todo>"},
-		"username" : {"<todo>"},
+		//"password": {"<todo>"},
+		//"username" : {"<todo>"},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -76,4 +101,74 @@ func login() *http.Client {
 	}
 	log.Println(string(data))
 	return &client
+}
+
+func parseKSFile() {
+	file, err := os.Open("schedule.csv")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	now := time.Now()
+	// duration between repairs in the schedule in min
+	// todo -- make this configurable
+	repairInterval := 180
+	fullRepairInterval := 1440
+	client := login()
+	scanner := bufio.NewScanner(file)
+	scheduleOffset := 1
+
+	for scanner.Scan() {
+
+		// CSV Expected format:
+		// <keyspace>,<segmentCount>,<blacklistedTable1>-<blacklistedTable2>-<blacklistedTable..n>
+		// eg with blacklisted tables: keyspace1,1000,standard1-standard2-standard3
+		entryLine := strings.Split(scanner.Text(), ",")
+
+		// default schedule
+		entry := ScheduleEntry{
+			// "premium1",
+			"Test Cluster",
+			entryLine[0],
+			"owner",
+			// add offset time between each schedule
+			now.Add(time.Duration(scheduleOffset) * time.Minute),
+			10,
+			1,
+			true,
+			nil,
+			1,
+		}
+
+		scheduleOffset += repairInterval
+
+		if len(entryLine) > 1 {
+			log.Println(entryLine)
+			// number of splits for sub-range segmentation
+			segments, err := strconv.Atoi(entryLine[1])
+			if err != nil {
+				log.Println("token conversion failed, expected an int, got ", entryLine[1])
+			}
+
+			entry.Segments = segments
+
+			// todo -- csvs are not fit for purpose, use json / yaml instead.
+			if len(entryLine) > 2 {
+				// array of tables that should not be repaired
+				entry.BlacklistedCFs = strings.Split(entryLine[2], "-")
+			}
+
+			entry.IncrementalRepair = false
+			entry.TriggerTime = now.Add(time.Duration(scheduleOffset) * time.Minute)
+			scheduleOffset += fullRepairInterval
+		}
+
+		// add an individual schedule
+		scheduleRepair(client, &entry)
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Println("❌ error reading csv: " , err)
+	}
 }
