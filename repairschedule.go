@@ -88,6 +88,8 @@ func login() *http.Client {
 	resp, err := client.PostForm("http://localhost:8080/login", url.Values{
 		//"password": {"<todo>"},
 		//"username" : {"<todo>"},
+		"password": {"admin"},
+		"username": {"admin"},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -104,7 +106,8 @@ func login() *http.Client {
 }
 
 func parseKSFile() {
-	file, err := os.Open("schedule.csv")
+	file, err := os.Open("/Users/lyubentodorov/Desktop/600keyspaces-may2020.csv")
+	//file, err := os.Open("/Users/lyubentodorov/Desktop/3keyspaces-may2020.csv")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -113,8 +116,8 @@ func parseKSFile() {
 	now := time.Now()
 	// duration between repairs in the schedule in min
 	// todo -- make this configurable
-	repairInterval := 180
-	fullRepairInterval := 1440
+	repairInterval := 17
+	fullRepairInterval := 360
 	client := login()
 	scanner := bufio.NewScanner(file)
 	scheduleOffset := 1
@@ -129,7 +132,7 @@ func parseKSFile() {
 		// default schedule
 		entry := ScheduleEntry{
 			// "premium1",
-			"Test Cluster",
+			"cassandra-sandbox1.prod.prod-ffs.io",
 			entryLine[0],
 			"owner",
 			// add offset time between each schedule
